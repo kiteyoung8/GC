@@ -18,7 +18,7 @@ export default function App() {
     summary: ''    // 查訪總結
   });
 
-  // 新增：上傳狀態與結果
+  // 上傳狀態與結果
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [reportLink, setReportLink] = useState('');
@@ -90,8 +90,8 @@ export default function App() {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     
-    // 這裡是你未來部署 GAS 後取得的網址 (Webhook URL)
-    const GAS_WEBHOOK_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL_HERE";
+    // ⚠️ 未來請將這裡替換成你的 Google Apps Script Webhook URL
+    const GAS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwQtED37RuFSeoygv-d6WEwOS6IFpCM_coWya59ZY5253_wa2tNiGmaBlujzcQ__5gzug/exec";
 
     try {
       /* // 這是未來真實串接的程式碼：
@@ -124,7 +124,7 @@ export default function App() {
     }
   };
 
-  // 所有 useRef 必須在最外層宣告，以符合 React Hooks 規則
+  // 所有的 useRef 必須宣告在組件的最頂層
   const mapInputRef = useRef(null);
   const photoInputRef = useRef(null);
   const materialInputRef = useRef(null);
@@ -332,7 +332,7 @@ export default function App() {
   const renderStep4 = () => (
     <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
 
-      {/* 使用資材與文件單據區塊 (置於總結上方) */}
+      {/* 使用資材與文件單據區塊 */}
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-xl font-bold text-green-800 flex items-center gap-2">
           <Package className="text-green-600" size={24} />
@@ -448,6 +448,7 @@ export default function App() {
     );
   }
 
+  // --- 主畫面渲染邏輯 ---
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-20">
       {/* 頂部標題列 */}
