@@ -90,11 +90,11 @@ export default function App() {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     
-    // ⚠️ 未來請將這裡替換成你的 Google Apps Script Webhook URL
+    // 已經替換為你提供的真實 GAS Webhook URL
     const GAS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwQtED37RuFSeoygv-d6WEwOS6IFpCM_coWya59ZY5253_wa2tNiGmaBlujzcQ__5gzug/exec";
 
     try {
-      /* // 這是未來真實串接的程式碼：
+      // 執行真實的 API 串接
       const response = await fetch(GAS_WEBHOOK_URL, {
         method: 'POST',
         body: JSON.stringify(formData),
@@ -108,18 +108,10 @@ export default function App() {
       } else {
         throw new Error(result.message);
       }
-      */
-
-      // 為了預覽效果，我們模擬等待 3 秒鐘，假裝伺服器正在生成文件
-      setTimeout(() => {
-        setReportLink('https://docs.google.com/document/d/1234567890abcdefg/edit');
-        setSubmitSuccess(true);
-        setIsSubmitting(false);
-      }, 3000);
-
     } catch (error) {
       console.error("上傳失敗:", error);
       alert("上傳失敗，請檢查網路連線或聯絡管理員。");
+    } finally {
       setIsSubmitting(false);
     }
   };
