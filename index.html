@@ -89,21 +89,26 @@
     }
 
     // ==========================================
-    // 子元件：2. 儀表板 (草稿清單)
+    // 子元件：2. 儀表板 (草稿清單 + 已送出紀錄)
     // ==========================================
     function DashboardView({ user, onLogout, onNewReport, onOpenDraft }) {
       const [drafts, setDrafts] = useState([]);
+      const [submittedReports, setSubmittedReports] = useState([]);
 
       useEffect(() => {
-        const loadDrafts = async () => {
+        const loadData = async () => {
+          // 載入草稿
           const savedDrafts = await get(`GC_Drafts_${user}`) || [];
-          // 依更新時間排序 (新到舊)
           setDrafts(savedDrafts.sort((a, b) => b.updatedAt - a.updatedAt));
+          
+          // 載入已送出的報告
+          const savedSubmitted = await get(`GC_Submitted_${user}`) || [];
+          setSubmittedReports(savedSubmitted.sort((a, b) => b.submittedAt - a.submittedAt));
         };
-        loadDrafts();
+        loadData();
       }, [user]);
 
-      const handleDelete = async (e, draftId) => {
+      const handleDeleteDraft = async (e, draftId) => {
         e.stopPropagation();
         if(confirm('確定要刪除這份草稿嗎？刪除後無法復原。')) {
           await del(`GC_Data_${draftId}`);
@@ -134,13 +139,14 @@
               <span className="text-xl font-bold">建立新查訪報告</span>
             </button>
 
+            {/* --- 暫存草稿區塊 --- */}
             <div className="flex items-center gap-2 mb-4 text-gray-700">
               <FolderOpen size={20} className="text-green-600" />
               <h2 className="font-bold text-lg">我的暫存草稿 ({drafts.length})</h2>
             </div>
 
             {drafts.length === 0 ? (
-              <div className="text-center py-10 bg-white rounded-2xl border border-dashed border-gray-300">
+              <div className="text-center py-6 bg-white rounded-2xl border border-dashed border-gray-300">
                 <p className="text-gray-400">目前沒有暫存的草稿</p>
               </div>
             ) : (
@@ -156,13 +162,45 @@
                         <span className="flex items-center gap-1"><Clock size={14}/> {new Date(draft.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                       </div>
                     </div>
-                    <button onClick={(e) => handleDelete(e, draft.id)} className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors">
+                    <button onClick={(e) => handleDeleteDraft(e, draft.id)} className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors">
                       <Trash2 size={20} />
                     </button>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* --- 已送出的報告區塊 --- */}
+            <div className="flex items-center gap-2 mb-4 mt-8 text-emerald-700">
+              <CheckCircle2 size={20} className="text-emerald-600" />
+              <h2 className="font-bold text-lg">已送出的報告 ({submittedReports.length})</h2>
+            </div>
+
+            {submittedReports.length === 0 ? (
+              <div className="text-center py-6 bg-white rounded-2xl border border-dashed border-gray-300">
+                <p className="text-gray-400">目前沒有已送出的報告</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {submittedReports.map(report => (
+                  <a key={report.id} href={report.url} target="_blank" rel="noreferrer" className="bg-white p-4 rounded-xl shadow-sm border border-emerald-100 flex items-center justify-between active:scale-95 transition-transform cursor-pointer hover:border-emerald-300 block">
+                    <div className="flex-1 overflow-hidden">
+                      <h3 className="font-bold text-gray-800 text-lg truncate mb-1">
+                        {report.target || '未填寫查訪對象'}
+                      </h3>
+                      <div className="flex items-center gap-3 text-sm text-gray-500">
+                        <span className="flex items-center gap-1"><Calendar size={14}/> {report.date || '無日期'}</span>
+                        <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14}/> {new Date(report.submittedAt).toLocaleDateString()} 送出</span>
+                      </div>
+                    </div>
+                    <div className="p-3 text-emerald-600 bg-emerald-50 rounded-full">
+                      <ExternalLink size={20} />
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
+
           </main>
         </div>
       );
@@ -292,6 +330,18 @@
             await del(`GC_Data_${draftId}`);
             let drafts = await get(`GC_Drafts_${user}`) || [];
             await set(`GC_Drafts_${user}`, drafts.filter(d => d.id !== draftId));
+
+            // 新增：儲存已送出的報告紀錄，以便在儀表板開啟
+            let submitted = await get(`GC_Submitted_${user}`) || [];
+            submitted.push({
+              id: draftId,
+              target: formData.target,
+              date: formData.date,
+              url: result.url,
+              submittedAt: Date.now()
+            });
+            await set(`GC_Submitted_${user}`, submitted);
+
           } else {
             throw new Error(result.message);
           }
