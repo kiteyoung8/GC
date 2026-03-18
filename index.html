@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>綠色保育查訪系統</title>
+  <title>綠色保育查訪系統 (專業版)</title>
   
   <!-- 載入 Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,90 +13,263 @@
 </head>
 <body class="bg-slate-50">
   
-  <!-- React 應用程式的掛載點 -->
   <div id="root"></div>
 
   <!-- 使用 ESM 模組與 Babel 執行 React -->
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
+    import React, { useState, useEffect, useRef, useCallback } from 'https://esm.sh/react@18.2.0';
     import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
-    import { Camera, MapPin, Clock, User, FileText, ChevronRight, ChevronLeft, Plus, Trash2, CheckCircle2, Leaf, ExternalLink, Map as MapIcon, Edit3, Package, Loader2, ExternalLink as LinkIcon } from 'https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0';
+    import { Camera, MapPin, Clock, User, FileText, ChevronRight, ChevronLeft, Plus, Trash2, CheckCircle2, Leaf, ExternalLink, Map as MapIcon, Edit3, Package, Loader2, ExternalLink as LinkIcon, LogOut, Home, Save, FolderOpen, UserCircle, FilePlus, Calendar } from 'https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0';
+    
+    // 引入 IndexedDB 輕量級操作套件
+    import { get, set, del } from 'https://esm.sh/idb-keyval@6.2.1';
 
-    // 主應用程式元件
-    function App() {
-      const [step, setStep] = useState(1);
-      const [formData, setFormData] = useState({
-        target: '',
-        caseId: '',
-        date: '',
-        time: '',
-        inspector: '',
-        location: '',
-        subject: '',
-        landPlots: [], 
-        photos: [],    
-        materials: [], 
-        summary: ''    
+    // --- 實用工具：圖片前端壓縮引擎 (預防 100 張照片導致 OOM 閃退) ---
+    const compressImage = (file, maxWidth = 1280, quality = 0.7) => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+          const img = new Image();
+          img.src = event.target.result;
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            // 等比例縮小
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          };
+          img.onerror = reject;
+        };
+        reader.onerror = reject;
       });
+    };
 
+    // --- 實用工具：產生唯一 ID ---
+    const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+    // ==========================================
+    // 子元件：1. 登入畫面
+    // ==========================================
+    function LoginView({ onLogin }) {
+      const [name, setName] = useState('');
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (name.trim()) onLogin(name.trim());
+      };
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-green-50">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-lg p-8 text-center animate-in zoom-in-95 duration-500">
+            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Leaf size={40} className="text-green-600" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-800 mb-2">綠色保育查訪系統</h1>
+            <p className="text-gray-500 mb-8">請輸入您的姓名登入系統，<br/>系統將自動儲存您的草稿進度。</p>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <input 
+                type="text" value={name} onChange={e => setName(e.target.value)}
+                placeholder="請輸入查訪員姓名" required
+                className="w-full p-4 rounded-xl border-2 border-green-100 focus:border-green-500 focus:ring-0 text-lg text-center font-medium bg-gray-50 focus:bg-white transition-all"
+              />
+              <button type="submit" className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl text-lg active:scale-95 transition-transform shadow-md">
+                登入系統
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 子元件：2. 儀表板 (草稿清單)
+    // ==========================================
+    function DashboardView({ user, onLogout, onNewReport, onOpenDraft }) {
+      const [drafts, setDrafts] = useState([]);
+
+      useEffect(() => {
+        const loadDrafts = async () => {
+          const savedDrafts = await get(`GC_Drafts_${user}`) || [];
+          // 依更新時間排序 (新到舊)
+          setDrafts(savedDrafts.sort((a, b) => b.updatedAt - a.updatedAt));
+        };
+        loadDrafts();
+      }, [user]);
+
+      const handleDelete = async (e, draftId) => {
+        e.stopPropagation();
+        if(confirm('確定要刪除這份草稿嗎？刪除後無法復原。')) {
+          await del(`GC_Data_${draftId}`);
+          const newDrafts = drafts.filter(d => d.id !== draftId);
+          await set(`GC_Drafts_${user}`, newDrafts);
+          setDrafts(newDrafts);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 pb-20">
+          <header className="bg-green-700 text-white p-5 shadow-md flex items-center justify-between sticky top-0 z-20">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-full"><UserCircle size={24} /></div>
+              <div>
+                <p className="text-xs text-green-200">登入身分</p>
+                <h1 className="font-bold">{user}</h1>
+              </div>
+            </div>
+            <button onClick={onLogout} className="text-green-100 flex flex-col items-center gap-1 active:scale-90 p-2">
+              <LogOut size={20} /><span className="text-[10px]">登出</span>
+            </button>
+          </header>
+
+          <main className="p-4 max-w-md mx-auto mt-4">
+            <button onClick={onNewReport} className="w-full bg-emerald-600 text-white p-6 rounded-2xl shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-transform mb-8 hover:bg-emerald-700">
+              <FilePlus size={28} />
+              <span className="text-xl font-bold">建立新查訪報告</span>
+            </button>
+
+            <div className="flex items-center gap-2 mb-4 text-gray-700">
+              <FolderOpen size={20} className="text-green-600" />
+              <h2 className="font-bold text-lg">我的暫存草稿 ({drafts.length})</h2>
+            </div>
+
+            {drafts.length === 0 ? (
+              <div className="text-center py-10 bg-white rounded-2xl border border-dashed border-gray-300">
+                <p className="text-gray-400">目前沒有暫存的草稿</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {drafts.map(draft => (
+                  <div key={draft.id} onClick={() => onOpenDraft(draft.id)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between active:scale-95 transition-transform cursor-pointer hover:border-green-300">
+                    <div className="flex-1 overflow-hidden">
+                      <h3 className="font-bold text-gray-800 text-lg truncate mb-1">
+                        {draft.target || '未填寫查訪對象'}
+                      </h3>
+                      <div className="flex items-center gap-3 text-sm text-gray-500">
+                        <span className="flex items-center gap-1"><Calendar size={14}/> {draft.date || '無日期'}</span>
+                        <span className="flex items-center gap-1"><Clock size={14}/> {new Date(draft.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                      </div>
+                    </div>
+                    <button onClick={(e) => handleDelete(e, draft.id)} className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors">
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 子元件：3. 報告填寫表單 (包含自動存檔邏輯)
+    // ==========================================
+    function ReportForm({ user, draftId, onExit }) {
+      const [step, setStep] = useState(1);
+      const [saveStatus, setSaveStatus] = useState('已同步'); // 儲存中... / 已自動儲存
       const [isSubmitting, setIsSubmitting] = useState(false);
       const [submitSuccess, setSubmitSuccess] = useState(false);
       const [reportLink, setReportLink] = useState('');
 
+      const [formData, setFormData] = useState({
+        id: draftId,
+        target: '', caseId: '', date: '', time: '', inspector: user, location: '', subject: '',
+        landPlots: [], photos: [], materials: [], summary: ''
+      });
+
+      // 載入草稿或初始化
       useEffect(() => {
-        const now = new Date();
-        const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const formattedTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        
-        setFormData(prev => ({
-          ...prev,
-          date: prev.date || formattedDate,
-          time: prev.time || formattedTime
-        }));
-      }, []);
+        const initData = async () => {
+          const savedData = await get(`GC_Data_${draftId}`);
+          if (savedData) {
+            setFormData(savedData);
+          } else {
+            const now = new Date();
+            setFormData(prev => ({
+              ...prev,
+              date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+              time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+            }));
+          }
+        };
+        initData();
+      }, [draftId, user]);
+
+      // 核心功能：自動儲存 (Debounce)
+      useEffect(() => {
+        if (isSubmitting || submitSuccess) return;
+
+        setSaveStatus('儲存中...');
+        const timer = setTimeout(async () => {
+          try {
+            // 儲存完整資料
+            await set(`GC_Data_${draftId}`, formData);
+            
+            // 儲存精簡版索引供儀表板使用
+            let drafts = await get(`GC_Drafts_${user}`) || [];
+            const meta = { id: draftId, target: formData.target, date: formData.date, updatedAt: Date.now() };
+            const existingIdx = drafts.findIndex(d => d.id === draftId);
+            if (existingIdx > -1) drafts[existingIdx] = meta;
+            else drafts.push(meta);
+            
+            await set(`GC_Drafts_${user}`, drafts);
+            setSaveStatus('已自動儲存');
+          } catch (e) {
+            setSaveStatus('儲存失敗');
+            console.error("Auto-save failed", e);
+          }
+        }, 1500); // 使用者停止操作 1.5 秒後寫入資料庫
+
+        return () => clearTimeout(timer);
+      }, [formData, user, draftId, isSubmitting, submitSuccess]);
 
       const handleInputChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
       };
 
-      const handleNextStep = () => setStep(prev => Math.min(prev + 1, 4));
-      const handlePrevStep = () => setStep(prev => Math.max(prev - 1, 1));
-
-      const handleImageUpload = (e, category) => {
+      // 圖片上傳結合壓縮機制
+      const handleImageUpload = async (e, category) => {
         const files = Array.from(e.target.files);
         if (!files.length) return;
+        setSaveStatus('壓縮圖片中...');
 
-        files.forEach(file => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            setFormData(prev => ({
-              ...prev,
-              [category]: [...prev[category], { 
-                id: Date.now() + Math.random(), 
-                dataUrl: reader.result, 
+        try {
+          const compressedImages = await Promise.all(
+            files.map(async (file) => {
+              const dataUrl = await compressImage(file, 1280, 0.7); // 壓縮至寬度 1280px, 品質 70%
+              return {
+                id: Date.now() + Math.random(),
+                dataUrl,
                 description: '',
-                landNumber: '' 
-              }]
-            }));
-          };
-          reader.readAsDataURL(file);
-        });
+                landNumber: ''
+              };
+            })
+          );
+
+          setFormData(prev => ({
+            ...prev,
+            [category]: [...prev[category], ...compressedImages]
+          }));
+        } catch (error) {
+          alert('圖片處理失敗，請嘗試其他圖片');
+        }
         e.target.value = null; 
       };
 
       const handleItemChange = (category, id, field, value) => {
-        setFormData(prev => ({
-          ...prev,
-          [category]: prev[category].map(item => item.id === id ? { ...item, [field]: value } : item)
-        }));
+        setFormData(prev => ({ ...prev, [category]: prev[category].map(item => item.id === id ? { ...item, [field]: value } : item) }));
       };
 
       const removeItem = (category, id) => {
-        setFormData(prev => ({
-          ...prev,
-          [category]: prev[category].filter(item => item.id !== id)
-        }));
+        setFormData(prev => ({ ...prev, [category]: prev[category].filter(item => item.id !== id) }));
       };
 
       const handleSubmit = async () => {
@@ -114,6 +287,11 @@
           if (result.status === 'success') {
             setReportLink(result.url);
             setSubmitSuccess(true);
+            
+            // 報告產出成功後，刪除本地草稿保持乾淨
+            await del(`GC_Data_${draftId}`);
+            let drafts = await get(`GC_Drafts_${user}`) || [];
+            await set(`GC_Drafts_${user}`, drafts.filter(d => d.id !== draftId));
           } else {
             throw new Error(result.message);
           }
@@ -129,196 +307,181 @@
       const photoInputRef = useRef(null);
       const materialInputRef = useRef(null);
 
-      // --- Step 1 ---
-      const renderStep1 = () => (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
-          <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-5 mb-6 space-y-5">
-            <h2 className="text-xl font-bold text-green-800 flex items-center gap-2 mb-4">
-              <FileText className="text-green-600" size={24} />
-              案件基本資料
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">查訪對象</label>
-                <input type="text" name="target" value={formData.target} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="輸入農友姓名或農場名" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">案件編號</label>
-                <input type="text" name="caseId" value={formData.caseId} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="例如: 112-XXXX" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Clock size={16}/>日期</label>
-                  <input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">時間</label>
-                  <input type="time" name="time" value={formData.time} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><User size={16}/>查證人員</label>
-                <input type="text" name="inspector" value={formData.inspector} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="您的姓名" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><MapPin size={16}/>查證地點</label>
-                <input type="text" name="location" value={formData.location} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="輸入田區位置" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">申請標的</label>
-                <input type="text" name="subject" value={formData.subject} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="例如: 咖啡、愛玉" />
-              </div>
-            </div>
-          </div>
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
-            <button onClick={handleNextStep} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 text-lg active:scale-95 transition-transform">
-              下一步：田區地號與位置圖 <ChevronRight size={20} />
-            </button>
-          </div>
-        </div>
-      );
-
-      // --- Step 2 ---
-      const renderStep2 = () => (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-green-800 flex items-center gap-2">
-              <MapIcon className="text-green-600" size={24} />
-              田區地號與位置圖
-            </h2>
-          </div>
-          <a href="https://easymap.land.moi.gov.tw/R02/Index" target="_blank" rel="noreferrer" className="w-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold py-4 rounded-xl flex items-center justify-center gap-2 mb-6 active:scale-95 transition-transform shadow-sm">
-            <ExternalLink size={20} /> 開啟內政部地籍圖截圖
-          </a>
-          <input type="file" accept="image/*" multiple ref={mapInputRef} onChange={(e) => handleImageUpload(e, 'landPlots')} className="hidden" />
-          <button onClick={() => mapInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-green-400 bg-green-50 hover:bg-green-100 text-green-700 font-semibold py-6 rounded-2xl flex items-center justify-center gap-2 transition-colors active:scale-95">
-            <Plus size={24} className="text-green-600" />
-            <span>新增一筆地號位置圖</span>
-          </button>
-          <div className="space-y-6">
-            {formData.landPlots.map((plot) => (
-              <div key={plot.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
-                <button onClick={() => removeItem('landPlots', plot.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
-                <div className="p-4 border-b border-gray-100 bg-gray-50">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">田區地號</label>
-                  <input type="text" value={plot.landNumber || ''} onChange={(e) => handleItemChange('landPlots', plot.id, 'landNumber', e.target.value)} placeholder="例如: 阿里山段 152-1 號" className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-green-500 bg-white" />
-                </div>
-                <div className="aspect-video w-full bg-gray-100 relative">
-                  <img src={plot.dataUrl} alt="地號圖" className="w-full h-full object-cover" />
-                </div>
-                <div className="p-4">
-                  <textarea value={plot.description} onChange={(e) => handleItemChange('landPlots', plot.id, 'description', e.target.value)} placeholder="輸入圖說" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-20 text-base" />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
-            <button onClick={handlePrevStep} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"><ChevronLeft size={20} /> 上一步</button>
-            <button onClick={handleNextStep} className="w-2/3 bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">下一步：照片紀錄 <ChevronRight size={20} /></button>
-          </div>
-        </div>
-      );
-
-      // --- Step 3 ---
-      const renderStep3 = () => (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-green-800 flex items-center gap-2"><Camera className="text-green-600" size={24} />現場照片紀錄</h2>
-            <span className="bg-green-100 text-green-800 text-sm font-semibold px-3 py-1 rounded-full">已新增 {formData.photos.length} 張</span>
-          </div>
-          <input type="file" accept="image/*" multiple capture="environment" ref={photoInputRef} onChange={(e) => handleImageUpload(e, 'photos')} className="hidden" />
-          <button onClick={() => photoInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-green-400 bg-green-50 hover:bg-green-100 text-green-700 font-semibold py-8 rounded-2xl flex flex-col items-center justify-center gap-3 transition-colors active:scale-95">
-            <div className="bg-white p-3 rounded-full shadow-sm"><Plus size={32} className="text-green-600" /></div>
-            <span className="text-lg">點擊拍攝或上傳現場照片</span>
-          </button>
-          <div className="space-y-6">
-            {formData.photos.map((photo, index) => (
-              <div key={photo.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
-                <button onClick={() => removeItem('photos', photo.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
-                <div className="aspect-video w-full bg-gray-100 relative">
-                  <img src={photo.dataUrl} className="w-full h-full object-cover" />
-                  <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded-md backdrop-blur-sm">圖 {index + 1}</div>
-                </div>
-                <div className="p-4">
-                  <textarea value={photo.description} onChange={(e) => handleItemChange('photos', photo.id, 'description', e.target.value)} placeholder="輸入照片說明" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-24 text-base" />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
-            <button onClick={handlePrevStep} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"><ChevronLeft size={20} /> 上一步</button>
-            <button onClick={handleNextStep} className="w-2/3 bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">下一步：資材與總結 <ChevronRight size={20} /></button>
-          </div>
-        </div>
-      );
-
-      // --- Step 4 ---
-      const renderStep4 = () => (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-green-800 flex items-center gap-2"><Package className="text-green-600" size={24} />使用資材與文件單據</h2>
-            <span className="bg-green-100 text-green-800 text-sm font-semibold px-3 py-1 rounded-full">已新增 {formData.materials.length} 張</span>
-          </div>
-          <input type="file" accept="image/*" multiple ref={materialInputRef} onChange={(e) => handleImageUpload(e, 'materials')} className="hidden" />
-          <button onClick={() => materialInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-600 font-semibold py-6 rounded-2xl flex items-center justify-center gap-2 transition-colors active:scale-95">
-            <Plus size={24} /><span>新增資材或單據照片</span>
-          </button>
-          <div className="space-y-6 mb-8">
-            {formData.materials.map((item) => (
-              <div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
-                <button onClick={() => removeItem('materials', item.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
-                <div className="aspect-video w-full bg-gray-100 relative"><img src={item.dataUrl} className="w-full h-full object-cover" /></div>
-                <div className="p-4"><textarea value={item.description} onChange={(e) => handleItemChange('materials', item.id, 'description', e.target.value)} placeholder="說明" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-20 text-base" /></div>
-              </div>
-            ))}
-          </div>
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-green-800 flex items-center gap-2 mb-4"><Edit3 className="text-green-600" size={24} />查訪總結</h2>
-            <textarea name="summary" value={formData.summary} onChange={handleInputChange} placeholder="請輸入本次查訪的總結紀錄..." className="w-full p-4 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-white resize-none h-40 text-lg shadow-sm" />
-          </div>
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
-            <button onClick={handlePrevStep} disabled={isSubmitting} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform disabled:opacity-50"><ChevronLeft size={20} /> 上一步</button>
-            <button onClick={handleSubmit} disabled={isSubmitting} className="w-2/3 bg-emerald-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-md hover:bg-emerald-700 disabled:opacity-70">
-              {isSubmitting ? <><Loader2 size={20} className="animate-spin" /> 報告產出中...</> : <><CheckCircle2 size={20} /> 儲存並產出報告</>}
-            </button>
-          </div>
-        </div>
-      );
-
-      // --- Success View ---
+      // --- 視圖：成功畫面 ---
       if (submitSuccess) {
         return (
           <div className="min-h-screen bg-slate-50 font-sans flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
             <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-6 shadow-inner"><CheckCircle2 size={48} className="text-green-600" /></div>
             <h1 className="text-3xl font-bold text-gray-800 mb-2">報告產出成功！</h1>
-            <p className="text-gray-500 mb-8 max-w-xs">檔案已自動儲存至 Google 雲端硬碟指定資料夾。</p>
+            <p className="text-gray-500 mb-8 max-w-xs">檔案已自動儲存至 Google 雲端硬碟，本地草稿已清除。</p>
             <div className="w-full max-w-sm bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8">
               <p className="text-sm text-gray-500 mb-2">查訪對象：{formData.target || '未填寫'}</p>
               <a href={reportLink} target="_blank" rel="noreferrer" className="w-full bg-blue-50 text-blue-700 font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-sm border border-blue-200"><LinkIcon size={20} />點擊查看 Google 文件</a>
             </div>
-            <button onClick={() => window.location.reload()} className="text-gray-500 font-medium py-2 px-4 rounded-lg hover:bg-gray-100 transition-colors">返回首頁填寫下一筆</button>
+            <button onClick={onExit} className="bg-gray-800 text-white font-bold py-4 px-8 rounded-xl active:scale-95 transition-transform w-full max-w-sm">回儀表板</button>
           </div>
         );
       }
 
-      // --- Main Render ---
+      // --- 視圖：表單內容區塊 ---
       return (
         <div className="min-h-screen bg-slate-50 font-sans pb-20">
+          {/* 頂部標題列 */}
           <header className="bg-green-700 text-white p-4 sticky top-0 z-20 shadow-md flex items-center justify-between">
-            <div className="flex items-center gap-2"><Leaf size={24} /><h1 className="text-xl font-bold">綠色保育查訪系統</h1></div>
-            <div className="text-green-200 text-sm font-medium">Step {step} / 4</div>
+            <div className="flex items-center gap-3">
+              <button onClick={onExit} className="bg-white/20 p-2 rounded-full active:scale-90 transition-transform"><Home size={20}/></button>
+              <h1 className="text-lg font-bold">Step {step}/4</h1>
+            </div>
+            <div className="flex items-center gap-1 text-sm bg-white/10 px-3 py-1.5 rounded-full">
+              {saveStatus === '儲存中...' ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+              <span>{saveStatus}</span>
+            </div>
           </header>
+          
           <div className="w-full bg-green-100 h-1.5">
             <div className="bg-green-500 h-1.5 transition-all duration-500 ease-in-out" style={{ width: `${(step / 4) * 100}%` }}></div>
           </div>
+
           <main className="p-4 max-w-md mx-auto">
-            {step === 1 && renderStep1()}
-            {step === 2 && renderStep2()}
-            {step === 3 && renderStep3()}
-            {step === 4 && renderStep4()}
+            {/* Step 1: 基本資料 */}
+            {step === 1 && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
+                <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-5 mb-6 space-y-5">
+                  <h2 className="text-xl font-bold text-green-800 flex items-center gap-2 mb-4"><FileText className="text-green-600" size={24} />案件基本資料</h2>
+                  <div className="space-y-4">
+                    <div><label className="block text-sm font-medium text-gray-700 mb-1">查訪對象</label><input type="text" name="target" value={formData.target} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="輸入農友姓名或農場名" /></div>
+                    <div><label className="block text-sm font-medium text-gray-700 mb-1">案件編號</label><input type="text" name="caseId" value={formData.caseId} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="例如: 112-XXXX" /></div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Clock size={16}/>日期</label><input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white" /></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-1">時間</label><input type="time" name="time" value={formData.time} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white" /></div>
+                    </div>
+                    <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><User size={16}/>查證人員</label><input type="text" name="inspector" value={formData.inspector} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="您的姓名" /></div>
+                    <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><MapPin size={16}/>查證地點</label><input type="text" name="location" value={formData.location} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="輸入田區位置" /></div>
+                    <div><label className="block text-sm font-medium text-gray-700 mb-1">申請標的</label><input type="text" name="subject" value={formData.subject} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white text-lg" placeholder="例如: 咖啡、愛玉" /></div>
+                  </div>
+                </div>
+                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
+                  <button onClick={() => setStep(2)} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 text-lg active:scale-95 transition-transform">下一步：田區地號與位置圖 <ChevronRight size={20} /></button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: 地號與位置圖 */}
+            {step === 2 && (
+              <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
+                <div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-bold text-green-800 flex items-center gap-2"><MapIcon className="text-green-600" size={24} />田區地號與位置圖</h2></div>
+                <a href="https://easymap.land.moi.gov.tw/R02/Index" target="_blank" rel="noreferrer" className="w-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold py-4 rounded-xl flex items-center justify-center gap-2 mb-6 active:scale-95 transition-transform shadow-sm"><ExternalLink size={20} /> 開啟內政部地籍圖截圖</a>
+                <input type="file" accept="image/*" multiple ref={mapInputRef} onChange={(e) => handleImageUpload(e, 'landPlots')} className="hidden" />
+                <button onClick={() => mapInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-green-400 bg-green-50 hover:bg-green-100 text-green-700 font-semibold py-6 rounded-2xl flex items-center justify-center gap-2 active:scale-95"><Plus size={24} className="text-green-600" /><span>新增地號位置圖</span></button>
+                
+                <div className="space-y-6">
+                  {formData.landPlots.map(plot => (
+                    <div key={plot.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
+                      <button onClick={() => removeItem('landPlots', plot.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
+                      <div className="p-4 border-b border-gray-100 bg-gray-50"><label className="block text-sm font-medium text-gray-700 mb-1">田區地號</label><input type="text" value={plot.landNumber || ''} onChange={(e) => handleItemChange('landPlots', plot.id, 'landNumber', e.target.value)} placeholder="例如: 阿里山段 152-1 號" className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-green-500 bg-white" /></div>
+                      <div className="aspect-video w-full bg-gray-100 relative"><img src={plot.dataUrl} className="w-full h-full object-cover" /></div>
+                      <div className="p-4"><textarea value={plot.description} onChange={(e) => handleItemChange('landPlots', plot.id, 'description', e.target.value)} placeholder="輸入圖說" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-20 text-base" /></div>
+                    </div>
+                  ))}
+                </div>
+                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
+                  <button onClick={() => setStep(1)} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"><ChevronLeft size={20} /> 上一步</button>
+                  <button onClick={() => setStep(3)} className="w-2/3 bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">下一步：照片紀錄 <ChevronRight size={20} /></button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: 照片紀錄 */}
+            {step === 3 && (
+              <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
+                <div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-bold text-green-800 flex items-center gap-2"><Camera className="text-green-600" size={24} />現場照片紀錄</h2><span className="bg-green-100 text-green-800 text-sm font-semibold px-3 py-1 rounded-full">已新增 {formData.photos.length} 張</span></div>
+                <input type="file" accept="image/*" multiple capture="environment" ref={photoInputRef} onChange={(e) => handleImageUpload(e, 'photos')} className="hidden" />
+                <button onClick={() => photoInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-green-400 bg-green-50 hover:bg-green-100 text-green-700 font-semibold py-8 rounded-2xl flex flex-col items-center justify-center gap-3 active:scale-95"><div className="bg-white p-3 rounded-full shadow-sm"><Plus size={32} className="text-green-600" /></div><span className="text-lg">點擊拍攝或大量上傳 (可傳100張)</span></button>
+                
+                <div className="space-y-6">
+                  {formData.photos.map((photo, idx) => (
+                    <div key={photo.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
+                      <button onClick={() => removeItem('photos', photo.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
+                      <div className="aspect-video w-full bg-gray-100 relative"><img src={photo.dataUrl} className="w-full h-full object-cover" /><div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded-md backdrop-blur-sm">圖 {idx + 1}</div></div>
+                      <div className="p-4"><textarea value={photo.description} onChange={(e) => handleItemChange('photos', photo.id, 'description', e.target.value)} placeholder="輸入照片說明" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-24 text-base" /></div>
+                    </div>
+                  ))}
+                </div>
+                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
+                  <button onClick={() => setStep(2)} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"><ChevronLeft size={20} /> 上一步</button>
+                  <button onClick={() => setStep(4)} className="w-2/3 bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">下一步：資材總結 <ChevronRight size={20} /></button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: 資材與總結 */}
+            {step === 4 && (
+              <div className="animate-in fade-in slide-in-from-right-8 duration-500 pb-24">
+                <div className="mb-4 flex items-center justify-between"><h2 className="text-xl font-bold text-green-800 flex items-center gap-2"><Package className="text-green-600" size={24} />使用資材與單據</h2><span className="bg-green-100 text-green-800 text-sm font-semibold px-3 py-1 rounded-full">已新增 {formData.materials.length} 張</span></div>
+                <input type="file" accept="image/*" multiple ref={materialInputRef} onChange={(e) => handleImageUpload(e, 'materials')} className="hidden" />
+                <button onClick={() => materialInputRef.current?.click()} className="w-full mb-6 border-2 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-600 font-semibold py-6 rounded-2xl flex items-center justify-center gap-2 active:scale-95"><Plus size={24} /><span>新增資材或單據照片</span></button>
+                
+                <div className="space-y-6 mb-8">
+                  {formData.materials.map((item) => (
+                    <div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
+                      <button onClick={() => removeItem('materials', item.id)} className="absolute top-2 right-2 bg-red-500/80 text-white p-2 rounded-full backdrop-blur-sm z-10 active:scale-90"><Trash2 size={18} /></button>
+                      <div className="aspect-video w-full bg-gray-100 relative"><img src={item.dataUrl} className="w-full h-full object-cover" /></div>
+                      <div className="p-4"><textarea value={item.description} onChange={(e) => handleItemChange('materials', item.id, 'description', e.target.value)} placeholder="說明" className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-gray-50 focus:bg-white resize-none h-20 text-base" /></div>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="mb-6"><h2 className="text-xl font-bold text-green-800 flex items-center gap-2 mb-4"><Edit3 className="text-green-600" size={24} />查訪總結</h2><textarea name="summary" value={formData.summary} onChange={handleInputChange} placeholder="請輸入本次查訪的總結紀錄..." className="w-full p-4 rounded-xl border border-gray-200 focus:ring-2 focus:ring-green-500 bg-white resize-none h-40 text-lg shadow-sm" /></div>
+                
+                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 flex gap-3">
+                  <button onClick={() => setStep(3)} disabled={isSubmitting} className="w-1/3 bg-gray-100 text-gray-700 font-bold py-4 rounded-xl flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"><ChevronLeft size={20} /> 上一步</button>
+                  <button onClick={handleSubmit} disabled={isSubmitting} className="w-2/3 bg-emerald-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 shadow-md hover:bg-emerald-700 disabled:opacity-70">
+                    {isSubmitting ? <><Loader2 size={20} className="animate-spin" /> 報告產出中...</> : <><CheckCircle2 size={20} /> 產出報告</>}
+                  </button>
+                </div>
+              </div>
+            )}
           </main>
         </div>
       );
+    }
+
+    // ==========================================
+    // 主應用程式 (負責路由切換)
+    // ==========================================
+    function App() {
+      // 嘗試從 LocalStorage 讀取上次登入的名稱
+      const [user, setUser] = useState(localStorage.getItem('gc_username') || null);
+      const [view, setView] = useState(user ? 'dashboard' : 'login'); // 'login', 'dashboard', 'form'
+      const [activeDraftId, setActiveDraftId] = useState(null);
+
+      const handleLogin = (name) => {
+        localStorage.setItem('gc_username', name);
+        setUser(name);
+        setView('dashboard');
+      };
+
+      const handleLogout = () => {
+        localStorage.removeItem('gc_username');
+        setUser(null);
+        setView('login');
+      };
+
+      const startNewReport = () => {
+        setActiveDraftId(generateId()); // 產生全新 ID
+        setView('form');
+      };
+
+      const openDraft = (id) => {
+        setActiveDraftId(id);
+        setView('form');
+      };
+
+      if (view === 'login') return <LoginView onLogin={handleLogin} />;
+      if (view === 'dashboard') return <DashboardView user={user} onLogout={handleLogout} onNewReport={startNewReport} onOpenDraft={openDraft} />;
+      if (view === 'form') return <ReportForm user={user} draftId={activeDraftId} onExit={() => setView('dashboard')} />;
+      
+      return null;
     }
 
     const root = createRoot(document.getElementById('root'));
